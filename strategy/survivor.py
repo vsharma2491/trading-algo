@@ -72,6 +72,8 @@ class SurvivorStrategy:
     2. **Position Scaling**: Limits multiplier to prevent oversized positions
     3. **Strike Adjustment**: Dynamically adjusts strikes for adequate premium
     4. **Reset Logic**: Prevents runaway reference point drift
+
+    PS: This will only work with Zerodha broker out of the box. For Fyers, there needs to be some straight forward changes to get quotes, place orders etc.
     """
     
     def __init__(self, broker, config, order_manager):
