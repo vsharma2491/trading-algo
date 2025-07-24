@@ -630,7 +630,7 @@ if __name__ == "__main__":
     # ==========================================================================
     
     # Load default configuration from YAML file
-    config_file = "system/strategy/configs/survivor.yml"
+    config_file = os.path.join(os.path.dirname(__file__), "configs/survivor.yml")
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)['default']
 
