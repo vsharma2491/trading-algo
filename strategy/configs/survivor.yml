@@ -1,0 +1,19 @@
+default:
+  index_symbol: "NSE:NIFTY 50"
+  symbol_initials: "NIFTY25807"
+  pe_gap: 20
+  ce_gap: 20
+  pe_quantity: 75
+  ce_quantity: 75
+  pe_symbol_gap: 200
+  ce_symbol_gap: 200
+  min_price_to_sell: 15
+  pe_reset_gap: 30
+  ce_reset_gap: 30
+  pe_start_point: 0
+  ce_start_point: 0
+  trans_type: "SELL"
+  exchange: "NFO"
+  order_type: "MARKET"
+  product_type: "NRML"
+  sell_multiplier_threshold: 5

@@ -1,2 +1,97 @@
 # trading-algo
 Code for certain trading strategies
+
+## Setup
+
+### 1. Install Dependencies
+
+This uses `uv` for dependency management. Install dependencies:
+
+```bash
+uv sync
+```
+
+Or if you prefer using pip:
+
+```bash
+pip install -r requirements.txt  # You may need to generate this from pyproject.toml
+```
+
+### 2. Environment Configuration
+
+1. Copy the sample environment file:
+   ```bash
+   cp .sample.env .env
+   ```
+
+2. Edit `.env` and fill in your broker credentials:
+   ```bash
+   # Broker Configuration - Supports Fyers, Zerodha
+   BROKER_NAME=fyers  # or zerodha
+   BROKER_API_KEY=<YOUR_API_KEY>
+   BROKER_API_SECRET=<YOUR_API_SECRET>
+   BROKER_ID=<YOUR_BROKER_ID>
+   BROKER_TOTP_REDIDRECT_URI=<YOUR_TOTP_REDIRECT_URI>
+   BROKER_TOTP_KEY=<YOUR_TOTP_KEY>
+   BROKER_TOTP_PIN=<YOUR_TOTP_PIN>
+   BROKER_PASSWORD=<YOUR_BROKER_PASSWORD>  # Required for Zerodha
+   ```
+
+### 3. Running Strategies
+
+Strategies should be placed in the `strategy/` folder.
+
+#### Running the Survivor Strategy
+
+
+**Basic usage (using default config):**
+```bash
+cd strategy/
+python survivor.py
+```
+
+**With custom parameters:**
+```bash
+cd strategy/
+python survivor.py \
+    --symbol-initials NIFTY25JAN30 \
+    --pe-gap 25 --ce-gap 25 \
+    --pe-quantity 50 --ce-quantity 50 \
+    --min-price-to-sell 15
+```
+
+**View current configuration:**
+```bash
+cd strategy/
+python survivor.py --show-config
+```
+
+### 4. Available Brokers
+
+- **Fyers**: Supports REST API for historical data, quotes, and WebSocket for live data
+- **Zerodha**: Supports KiteConnect API with order management and live data streaming
+
+### 5. Core Components
+
+- `brokers/`: Broker implementations (Fyers, Zerodha)
+- `dispatcher.py`: Data routing and queue management
+- `orders.py`: Order management utilities
+- `logger.py`: Logging configuration
+- `strategy/`: Place your trading strategies here
+
+### Example Usage
+
+```python
+from brokers.fyers import FyersBroker
+from brokers.zerodha import ZerodhaBroker
+
+# Initialize broker based on environment
+if os.getenv('BROKER_NAME') == 'fyers':
+    broker = FyersBroker(symbols=['NSE:SBIN-EQ'])
+else:
+    broker = ZerodhaBroker()
+
+# Get historical data, place orders, etc.
+```
+
+For more details, check the individual broker implementations and example strategies in the `strategy/` folder.
