@@ -101,7 +101,7 @@ from brokers.zerodha import ZerodhaBroker
 if os.getenv('BROKER_NAME') == 'fyers':
     broker = FyersBroker(symbols=['NSE:SBIN-EQ'])
 else:
-    broker = ZerodhaBroker(without_totp=True) # Only available for Fyers
+    broker = ZerodhaBroker(without_totp=True) # Only available for Zerodha
 
 # Get historical data, place orders, etc.
 ```
