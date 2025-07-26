@@ -9,14 +9,14 @@ To insall uv, use:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+or
 
-This uses `uv` for dependency management. Install dependencies:
 
 ```bash
 pip install uv
 ```
 
-
+This uses `uv` for dependency management. Install dependencies:
 ```bash
 uv sync
 ```
