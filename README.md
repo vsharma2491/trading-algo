@@ -5,6 +5,11 @@ Code for certain trading strategies
 
 ### 1. Install Dependencies
 
+To insall uv, use:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
 This uses `uv` for dependency management. Install dependencies:
 
 ```bash
@@ -35,6 +40,8 @@ pip install -r requirements.txt  # You may need to generate this from pyproject.
    BROKER_NAME=fyers  # or zerodha
    BROKER_API_KEY=<YOUR_API_KEY>
    BROKER_API_SECRET=<YOUR_API_SECRET>
+   # items below can be skipped if not using TOTP (Fyers currently only has TOTP based login)
+   BROKER_TOTP_ENABLE=false # or true
    BROKER_ID=<YOUR_BROKER_ID>
    BROKER_TOTP_REDIDRECT_URI=<YOUR_TOTP_REDIRECT_URI>
    BROKER_TOTP_KEY=<YOUR_TOTP_KEY>
@@ -94,7 +101,7 @@ from brokers.zerodha import ZerodhaBroker
 if os.getenv('BROKER_NAME') == 'fyers':
     broker = FyersBroker(symbols=['NSE:SBIN-EQ'])
 else:
-    broker = ZerodhaBroker()
+    broker = ZerodhaBroker(without_totp=True) # Only available for TOTP
 
 # Get historical data, place orders, etc.
 ```

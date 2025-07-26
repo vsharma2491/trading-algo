@@ -19,20 +19,29 @@ load_dotenv()
 
 # --- Zerodha Broker ---
 class ZerodhaBroker(BrokerBase):
-    def __init__(self):
+    def __init__(self, without_totp):
         super().__init__()
+        self.without_totp = without_totp
         self.kite, self.auth_response_data = self.authenticate()
         # self.kite.set_access_token(self.auth_response_data["access_token"])
         self.kite_ws = KiteTicker(api_key=os.getenv('BROKER_API_KEY'), access_token=self.auth_response_data["access_token"])
         self.tick_counter = 0
         self.symbols = []
-
+        
     def authenticate(self):
         api_key = os.getenv('BROKER_API_KEY')
         api_secret = os.getenv('BROKER_API_SECRET')
         broker_id = os.getenv('BROKER_ID')
         totp_secret = os.getenv('BROKER_TOTP_KEY')
         password = os.getenv('BROKER_PASSWORD')
+
+        if self.without_totp:
+            kite = KiteConnect(api_key=os.getenv('BROKER_API_KEY'))
+            print(f"Please Login to Zerodha and get the request token from the URL.\n {kite.login_url()} \nThen paste the request token here:")
+            request_token = input("Request Token: ")
+            resp = kite.generate_session(request_token, os.environ['BROKER_API_SECRET'])
+            return kite, resp
+        
 
         if not all([api_key, api_secret, broker_id, totp_secret]):
             raise Exception("Missing one or more required environment variables.")

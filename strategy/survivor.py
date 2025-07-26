@@ -946,7 +946,12 @@ PARAMETER GROUPS:
     
     
     # Create broker interface for market data and order execution
-    broker = ZerodhaBroker()
+    if os.getenv("BROKER_TOTP_ENABLE") == "true":
+        logger.info("Using TOTP login flow")
+        broker = ZerodhaBroker(without_totp=False)
+    else:
+        logger.info("Using normal login flow")
+        broker = ZerodhaBroker(without_totp=True)
     
     # Create order tracking system for position management
     order_tracker = OrderTracker() 
