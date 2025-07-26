@@ -8,6 +8,11 @@ Code for certain trading strategies
 This uses `uv` for dependency management. Install dependencies:
 
 ```bash
+pip install uv
+```
+
+
+```bash
 uv sync
 ```
 
