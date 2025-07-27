@@ -1,8 +1,5 @@
 from logger import logger
-import queue # Using Python's built-in queue for simplicity in example
-              # For multiprocessing, you'd use multiprocessing.Queue
 
-# --- Data Dispatcher Definition (Simplified for Main Queue) ---
 class DataDispatcher:
     """
     Routes incoming market data to a single main worker queue.
@@ -41,7 +38,7 @@ class DataDispatcher:
 
         try:
             self._main_queue.put(data)
-            logger.debug(f"Dispatched data '{data[0].get('symbol', 'N/A')}' to main queue.")
+            logger.debug(f"Dispatched data to main queue.")
         except Exception as e:
-            logger.error(f"Error dispatching data to main queue: {e}")
+            logger.error(f"Error dispatching data to main queue: {e}", exc_info=True)
 
