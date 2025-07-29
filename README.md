@@ -1,6 +1,9 @@
 # trading-algo
 Code for certain trading strategies
 
+## Disclaimer:
+This algorithm is provided for *educational* and *informational purposes* only. Trading in financial markets involves substantial risk, and you may lose all or more than your initial investment. By using this algorithm, you acknowledge that all trading decisions are made at your own risk and discretion. The creators of this algorithm assume no liability or responsibility for any financial losses or damages incurred through its use. *Always do your own research and consult with a qualified financial advisor before trading.*
+
 ## Setup
 
 ### 1. Install Dependencies
