@@ -18,7 +18,7 @@ import functools
 from typing import Dict, List, Optional, Any, Tuple
 
 # Import base broker classes
-from base import BrokerBase
+from .base import BrokerBase
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)

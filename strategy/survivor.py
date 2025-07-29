@@ -922,7 +922,111 @@ PARAMETER GROUPS:
     # SECTION 3: CONFIGURATION VALIDATION AND LOGGING
     # ==========================================================================
     
-    # Validating the configuration with sensible values might be a good idea
+    # Validate that user has updated default configuration values
+    def validate_configuration(config):
+        """
+        Validate that user has updated at least some default configuration values
+        Returns True if config is valid, False otherwise
+        """
+        # Define default values that indicate user hasn't updated config
+        default_values = {
+            'symbol_initials': 'NIFTY25807',  
+            'pe_gap': 20,
+            'ce_gap': 20,
+            'pe_quantity': 75,
+            'ce_quantity': 75,
+            'pe_symbol_gap': 200,
+            'ce_symbol_gap': 200,
+            'min_price_to_sell': 15,
+            'pe_reset_gap': 30,
+            'ce_reset_gap': 30,
+            'pe_start_point': 0,
+            'ce_start_point': 0,
+            'sell_multiplier_threshold': 5
+        }
+        
+        # Check which values are still at defaults
+        unchanged_values = []
+        changed_values = []
+        for key, default_value in default_values.items():
+            if config.get(key) == default_value:
+                unchanged_values.append(key)
+            else:
+                changed_values.append(key)
+        
+        # If ALL values are still at defaults, show error and exit
+        if len(changed_values) == 0:
+            print("\n" + "="*80)
+            print("❌ CONFIGURATION VALIDATION FAILED")
+            print("="*80)
+            print("ALL configuration values are still at their defaults!")
+            print("You must update at least some parameters before running the strategy.")
+            print()
+            print("CRITICAL PARAMETERS TO UPDATE:")
+            print("• symbol_initials: Must match current option series (e.g., NIFTY25JAN30)")
+            print("• pe_gap/ce_gap: Price movement thresholds for your strategy")
+            print("• pe_quantity/ce_quantity: Position sizes based on your capital")
+            print("• min_price_to_sell: Minimum option premium threshold")
+            print()
+            print("Example command line usage:")
+            print("python survivor.py \\")
+            print("    --symbol-initials NIFTY25JAN30 \\")
+            print("    --pe-gap 25 --ce-gap 25 \\")
+            print("    --pe-quantity 50 --ce-quantity 50 \\")
+            print("    --min-price-to-sell 20")
+            print("="*80)
+            return False
+        
+        # If SOME values are still at defaults, show warning and ask for confirmation
+        if len(unchanged_values) > 0:
+            print("\n" + "="*80)
+            print("⚠️  CONFIGURATION WARNING")
+            print("="*80)
+            print("Some configuration values are still at their defaults:")
+            print()
+            
+            for value in unchanged_values:
+                print(f"  ⚠️  {value}: {config.get(value)} (default)")
+            
+            if len(changed_values) > 0:
+                print("\nUpdated values:")
+                for value in changed_values:
+                    print(f"  ✅ {value}: {config.get(value)} (updated)")
+            
+            print("\n" + "="*80)
+            print("⚠️  WARNING: Running with default values may result in:")
+            print("   • Trading wrong option series")
+            print("   • Incorrect position sizes")
+            print("   • Poor risk management")
+            print("   • Potential losses")
+            print("="*80)
+            
+            # Ask for user confirmation
+            while True:
+                response = input("\nDo you want to proceed with this configuration? (yes/no): ").lower().strip()
+                if response in ['yes', 'y']:
+                    print("\n✅ Proceeding with current configuration...")
+                    return True
+                elif response in ['no', 'n']:
+                    print("\n❌ Strategy execution cancelled by user.")
+                    print("Please update your configuration and try again.")
+                    return False
+                else:
+                    print("Please enter 'yes' or 'no'.")
+        
+        # If all values have been updated, proceed without confirmation
+        print("\n" + "="*80)
+        print("✅ CONFIGURATION VALIDATION PASSED")
+        print("="*80)
+        print("All critical parameters have been updated from defaults.")
+        print("Proceeding with strategy execution...")
+        print("="*80)
+        return True
+    
+    # Run configuration validation
+    if not validate_configuration(config):
+        logger.error("Configuration validation failed. Please update your configuration.")
+        sys.exit(1)
 
     # Log configuration source and overrides
     if overridden_params:
