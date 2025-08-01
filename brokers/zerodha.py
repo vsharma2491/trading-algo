@@ -160,6 +160,10 @@ class ZerodhaBroker(BrokerBase):
     def get_quote(self, symbol):
         return self.kite.quote(symbol)
     
+
+    def get_positions(self):
+        return self.kite.positions()
+
     def symbols_to_subscribe(self, symbols):
         self.symbols = symbols
 
