@@ -1,38 +1,41 @@
 import os
 import sys
+import hashlib
+import requests
+from threading import Thread
+from flask import Flask, request
+from typing import Dict, Any, Optional, List
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from typing import Dict, Any, Optional, List
 from brokers.base import BrokerBase
 from logger import logger
-
 from NorenRestApiPy.NorenApi import NorenApi
 
 class FlattradeBroker(BrokerBase):
     """A broker class for the Flattrade API.
 
     This class handles authentication, order placement, and data retrieval
-    for the Flattrade platform.
+    for the Flattrade platform. It features an automated authentication
+    process that uses a temporary web server to capture the login token.
     """
     def __init__(self):
         """Initializes the FlattradeBroker."""
         super().__init__()
         logger.info("Initializing FlattradeBroker...")
         self.api = NorenApi()
+        self.session_token = None
         self.authenticate()
 
     def authenticate(self) -> Optional[str]:
-        """Authenticates with the Flattrade API using a manual token flow.
+        """Authenticates with the Flattrade API using an automated flow.
 
-        This method prompts the user to generate a session token by logging
-        in through a browser.
+        This method starts a temporary web server to handle the redirect from
+        the Flattrade login page, automatically generating the session token.
 
         Returns:
-            Optional[str]: The session token if authentication is successful,
-                           otherwise None.
+            Optional[str]: The session token if successful, otherwise None.
         """
-        logger.info("Authenticating with Flattrade...")
-
         api_key = os.getenv("BROKER_API_KEY")
         api_secret = os.getenv("BROKER_API_SECRET")
         broker_id = os.getenv("BROKER_ID")
@@ -41,28 +44,55 @@ class FlattradeBroker(BrokerBase):
             logger.error("Flattrade API key, secret, or user ID are not set in .env file.")
             return None
 
+        app = Flask(__name__)
+
+        @app.route('/', methods=['GET'])
+        def token_handler():
+            request_token = request.args.get('code')
+            if not request_token:
+                return "Error: Could not retrieve request token.", 400
+
+            sha256_hash = hashlib.sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()
+
+            payload = {
+                "api_key": api_key,
+                "request_code": request_token,
+                "api_secret": sha256_hash
+            }
+
+            try:
+                response = requests.post("https://authapi.flattrade.in/trade/apitoken", json=payload)
+                response.raise_for_status()
+                token_data = response.json()
+
+                if token_data.get('stat') == 'Ok' and token_data.get('token'):
+                    self.session_token = token_data['token']
+                    return "Authentication successful! You can close this window."
+                else:
+                    return f"Error: {token_data.get('emsg', 'Unknown error')}", 400
+            except requests.exceptions.RequestException as e:
+                return f"Error: {e}", 500
+            finally:
+                # Shutdown the server once the request is handled
+                request.environ.get('werkzeug.server.shutdown')()
+
+
+        server = Thread(target=app.run, kwargs={'port': 8080})
+        server.daemon = True
+        server.start()
+
         login_url = f"https://auth.flattrade.in/?app_key={api_key}"
-        print(f"Please login to Flattrade using this URL: {login_url}")
-        print("After logging in, you will be redirected. Please paste the `request_token` from the redirected URL.")
-        request_token = input("Request Token: ")
+        print(f"\nPlease log in to Flattrade using this URL: {login_url}")
 
-        # The Flattrade Python client does not expose a direct way to generate a session
-        # from a request token. The intended flow is to run their token generator script.
-        # For this integration, we will assume the user can provide the final session token.
+        # Wait until the token is captured
+        while not self.session_token:
+            pass
 
-        print("\nPlease provide the full session token (JWT) after completing the login flow.")
-        session_token = input("Session Token: ")
+        ret = self.api.set_session(userid=broker_id, password="", usertoken=self.session_token)
 
-        if not session_token:
-            logger.error("Session token is required for Flattrade authentication.")
-            return None
-
-        # The set_session method is used to set the authenticated session.
-        ret = self.api.set_session(userid=broker_id, password="", usertoken=session_token)
-
-        if ret is not None and ret.get('stat') == 'Ok':
+        if ret and ret.get('stat') == 'Ok':
             logger.info("Flattrade authentication successful.")
-            self.access_token = session_token
+            self.access_token = self.session_token
             self.authenticated = True
             return self.access_token
         else:
