@@ -35,15 +35,20 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # pip install uv
 ```
 
-Then, sync the project dependencies:
+Then, create a virtual environment and sync the project dependencies:
 ```bash
+# This creates a virtual environment in the .venv directory
+uv venv
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Install dependencies from pyproject.toml
 uv sync
+
+# Install the Flattrade API client and Flask
+uv pip install flask NorenRestApi-0.0.29-py3-none-any.whl
 ```
-This will install most dependencies. However, the Flattrade API client requires a manual installation step. The necessary wheel file is included in this repository and will be installed with the following command:
-```bash
-uv pip install NorenRestApiPy*.whl
-```
-You may need to run this command from the root of the repository. Alternatively, you can generate a `requirements.txt` from `pyproject.toml` and use `pip`.
 
 ### 2. Configure Environment Variables
 
@@ -86,8 +91,8 @@ BROKER_API_SECRET=<YOUR_API_SECRET>
 BROKER_TOTP_ENABLE=false
 ```
 
-**For Flattrade (Manual Login):**
-Flattrade requires a manual login to generate a session token. The application will prompt you to enter the token.
+**For Flattrade (Automated Login):**
+The framework uses an automated login flow for Flattrade. When you run the strategy, it will provide a URL for you to log in. After you log in, the application will automatically capture the session token.
 ```
 BROKER_NAME=flattrade
 BROKER_API_KEY=<YOUR_API_KEY>
