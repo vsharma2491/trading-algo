@@ -6,78 +6,40 @@ import yaml
 from logger import logger
 
 class SurvivorStrategy:
-    """
-    Survivor Options Trading Strategy
-    
-    This strategy implements a systematic approach to options trading based on price movements
-    of the NIFTY index. The core concept is to sell options (both PE and CE) when the underlying
-    index moves beyond certain thresholds, capturing premium decay while managing risk through
-    dynamic gap adjustments.
-    
-    STRATEGY OVERVIEW:
-    ==================
-    
-    1. **Dual-Side Trading**: The strategy monitors both upward and downward movements:
-       - PE (Put) Trading: Triggered when NIFTY price moves UP beyond pe_gap threshold
-       - CE (Call) Trading: Triggered when NIFTY price moves DOWN beyond ce_gap threshold
-    
-    2. **Gap-Based Execution**: 
-       - Maintains reference points (nifty_pe_last_value, nifty_ce_last_value)
-       - Executes trades when price deviates beyond configured gaps
-       - Uses multipliers to scale position sizes based on gap magnitude
-    
-    3. **Dynamic Strike Selection**:
-       - Selects option strikes based on symbol_gap from current price
-       - Adjusts strikes if option premium is below minimum threshold
-       - Ensures adequate liquidity and pricing
-    
-    4. **Reset Mechanism**:
-       - Automatically adjusts reference points when market moves favorably
-       - Prevents excessive accumulation of positions
-       - Maintains strategy responsiveness to market conditions
-    
-    TRADING LOGIC EXAMPLE:
-    =====================
-    
-    Scenario: NIFTY at 24,500, pe_gap=25, pe_symbol_gap=200
-    
-    1. Initial State: nifty_pe_last_value = 24,500
-    2. NIFTY rises to 24,530 (difference = 30)
-    3. Since 30 > pe_gap(25), trigger PE sell
-    4. Sell multiplier = 30/25 = 1 (rounded down)
-    5. Select PE strike at 24,500-200 = 24,300 PE
-    6. Update reference: nifty_pe_last_value = 24,525 (24,500 + 25*1)
-    
-    CONFIGURATION PARAMETERS:
-    ========================
-    
-    Core Parameters:
-    - symbol_initials: Option series identifier (e.g., 'NIFTY25JAN30')
-    - index_symbol: Underlying index for tracking (e.g., 'NSE:NIFTY 50')
-    
-    Gap Parameters:
-    - pe_gap/ce_gap: Price movement thresholds to trigger trades
-    - pe_symbol_gap/ce_symbol_gap: Strike distance from current price
-    - pe_reset_gap/ce_reset_gap: Favorable movement thresholds for reference reset
-    
-    Quantity & Risk:
-    - pe_quantity/ce_quantity: Base quantities for each trade
-    - min_price_to_sell: Minimum option premium threshold
-    - sell_multiplier_threshold: Maximum position scaling limit
-    
-    RISK MANAGEMENT:
-    ===============
-    
-    1. **Premium Filtering**: Only sells options above min_price_to_sell
-    2. **Position Scaling**: Limits multiplier to prevent oversized positions
-    3. **Strike Adjustment**: Dynamically adjusts strikes for adequate premium
-    4. **Reset Logic**: Prevents runaway reference point drift
+    """Implements the Survivor options trading strategy.
 
-    PS: This will only work with Zerodha broker out of the box. For Fyers, there needs to be some straight forward changes to get quotes, place orders etc.
+    This strategy systematically sells options based on NIFTY index movements,
+    aiming to capture premium decay while managing risk through dynamic gap
+    adjustments.
+
+    The strategy operates on both puts (PE) and calls (CE):
+    - PE trades are triggered when NIFTY moves up beyond a `pe_gap`.
+    - CE trades are triggered when NIFTY moves down beyond a `ce_gap`.
+
+    Key features include gap-based execution with multipliers, dynamic strike
+    selection, and a reset mechanism to keep reference points aligned with
+    the market.
+
+    Note:
+        This strategy is designed for the Zerodha broker and may require
+        modifications for other brokers like Fyers.
+
+    Attributes:
+        broker: An instance of a broker class for market data and execution.
+        order_manager: An instance of OrderTracker for managing orders.
+        instruments (pd.DataFrame): A DataFrame of available instruments.
+        nifty_pe_last_value (float): The reference price for PE trades.
+        nifty_ce_last_value (float): The reference price for CE trades.
     """
     
-    def __init__(self, broker, config, order_manager):
-        # Assign config values as instance variables with 'strat_var_' prefix
+    def __init__(self, broker, config: dict, order_manager):
+        """Initializes the SurvivorStrategy.
+
+        Args:
+            broker: An instance of a broker class (e.g., ZerodhaBroker).
+            config (dict): A dictionary containing strategy parameters.
+            order_manager: An instance of the OrderTracker class.
+        """
         for k, v in config.items():
             setattr(self, f'strat_var_{k}', v)
         # External dependencies
@@ -98,46 +60,56 @@ class SurvivorStrategy:
         self.strike_difference = self._get_strike_difference(self.symbol_initials)
         logger.info(f"Strike difference for {self.symbol_initials} is {self.strike_difference}")
 
-    def _nifty_quote(self):
+    def _nifty_quote(self) -> dict:
+        """Retrieves the current quote for the NIFTY 50 index.
+
+        Returns:
+            dict: The quote data for NIFTY 50.
+        """
         symbol_code = "NSE:NIFTY 50"
         return self.broker.get_quote(symbol_code)
 
     def _initialize_state(self):
+        """Initializes the strategy's state variables.
 
-        # Initialize reset flags - these track when reset conditions are triggered
-        self.pe_reset_gap_flag = 0  # Set to 1 when PE trade is executed
-        self.ce_reset_gap_flag = 0  # Set to 1 when CE trade is executed
+        This method sets the initial reference prices for PE and CE trades
+        (either from the config or the current market price) and resets
+        the trade flags.
+        """
+        self.pe_reset_gap_flag = 0
+        self.ce_reset_gap_flag = 0
         
-        # Get current market data for initialization
         current_quote = self._nifty_quote()
-        print(current_quote)  # Debug output
+        print(current_quote)
         
-        # Initialize PE reference value
         if self.strat_var_pe_start_point == 0:
-            # Use current market price as starting reference
             self.nifty_pe_last_value = current_quote[self.strat_var_index_symbol]['last_price']
             logger.debug(f"Nifty PE Start Point is 0, so using LTP: {self.nifty_pe_last_value}")
         else:
-            # Use configured starting point
             self.nifty_pe_last_value = self.strat_var_pe_start_point
 
-        # Initialize CE reference value
         if self.strat_var_ce_start_point == 0:
-            # Use current market price as starting reference
             self.nifty_ce_last_value = current_quote[self.strat_var_index_symbol]['last_price']
             logger.debug(f"Nifty CE Start Point is 0, so using LTP: {self.nifty_ce_last_value}")
         else:
-            # Use configured starting point
             self.nifty_ce_last_value = self.strat_var_ce_start_point
             
         logger.info(f"Nifty PE Start Value during initialization: {self.nifty_pe_last_value}, "
                    f"Nifty CE Start Value during initialization: {self.nifty_ce_last_value}")
 
-    def _get_strike_difference(self, symbol_initials):
+    def _get_strike_difference(self, symbol_initials: str) -> int:
+        """Calculates the difference between consecutive strike prices.
+
+        Args:
+            symbol_initials (str): The prefix for the option series
+                (e.g., "NIFTY25JAN30").
+
+        Returns:
+            int: The difference between strikes (e.g., 50 or 100).
+        """
         if self.strike_difference is not None:
             return self.strike_difference
             
-        # Filter for CE instruments to calculate strike difference 
         ce_instruments = self.instruments[
             self.instruments['tradingsymbol'].str.startswith(symbol_initials) & 
             self.instruments['tradingsymbol'].str.endswith('CE')
@@ -146,154 +118,113 @@ class SurvivorStrategy:
         if ce_instruments.shape[0] < 2:
             logger.error(f"Not enough CE instruments found for {symbol_initials} to calculate strike difference")
             return 0
-        # Sort by strike
+
         ce_instruments_sorted = ce_instruments.sort_values('strike')
-        # Take the top 2
         top2 = ce_instruments_sorted.head(2)
-        # Calculate the difference
         self.strike_difference = abs(top2.iloc[1]['strike'] - top2.iloc[0]['strike'])
         return self.strike_difference
 
-    def on_ticks_update(self, ticks):
-        """
-        Main strategy execution method called on each tick update
-        
+    def on_ticks_update(self, ticks: dict):
+        """The main entry point for the strategy on each market data tick.
+
+        This method is called by the trading loop whenever new market data is
+        received. It extracts the current price and triggers the evaluation
+        of PE and CE trading opportunities, as well as the reset logic.
+
         Args:
-            ticks (dict): Market data containing 'last_price' and other tick information
-            
-        This is the core method that:
-        1. Extracts current price from tick data
-        2. Evaluates PE trading opportunities
-        3. Evaluates CE trading opportunities  
-        4. Applies reset logic for reference values
-        
-        Called externally by the main trading loop when new market data arrives
+            ticks (dict): A dictionary containing market data, including the
+                'last_price' of the underlying index.
         """
         current_price = ticks['last_price']
         
-        # Process trading opportunities for both sides
-        self._handle_pe_trade(current_price)  # Handle Put option opportunities
-        self._handle_ce_trade(current_price)  # Handle Call option opportunities
-        
-        # Apply reset logic to adjust reference values
+        self._handle_pe_trade(current_price)
+        self._handle_ce_trade(current_price)
         self._reset_reference_values(current_price)
 
-    def _check_sell_multiplier_breach(self, sell_multiplier):
-        """
-        Risk management check for position scaling
-        
+    def _check_sell_multiplier_breach(self, sell_multiplier: int) -> bool:
+        """Checks if the position scaling multiplier exceeds a risk threshold.
+
+        This method serves as a risk management check to prevent oversized
+        positions during large, sudden price movements.
+
         Args:
-            sell_multiplier (int): The calculated multiplier for position sizing
-            
+            sell_multiplier (int): The calculated multiplier for position sizing.
+
         Returns:
-            bool: True if multiplier exceeds threshold, False otherwise
-            
-        This prevents excessive position sizes when large price movements occur.
-        For example, if threshold is 3 and price moves 100 points with gap=25,
-        multiplier would be 4, which exceeds threshold and blocks the trade.
+            bool: True if the multiplier is over the threshold, False otherwise.
         """
         if sell_multiplier > self.strat_var_sell_multiplier_threshold:
             logger.warning(f"Sell multiplier {sell_multiplier} breached the threshold {self.strat_var_sell_multiplier_threshold}")
             return True
         return False
 
-    def _handle_pe_trade(self, current_price):
-        """
-        Handle PE (Put) option trading logic
-        
+    def _handle_pe_trade(self, current_price: float):
+        """Evaluates and executes PE (Put) option trades.
+
+        This method is triggered when the NIFTY index moves up. It sells PE
+        options to profit from the upward movement.
+
+        The process involves:
+        1.  Checking if the upward price movement exceeds `pe_gap`.
+        2.  Calculating a `sell_multiplier` based on the gap magnitude.
+        3.  Validating the multiplier against risk limits.
+        4.  Finding a suitable PE strike with an adequate premium.
+        5.  Executing the trade and updating the `nifty_pe_last_value`.
+
         Args:
-            current_price (float): Current NIFTY index price
-            
-        PE Trading Logic:
-        - Triggered when current_price > nifty_pe_last_value + pe_gap
-        - Sells PE options (benefits from upward price movement)
-        - Updates reference value after execution
-        
-        Process:
-        1. Check if upward movement exceeds gap threshold
-        2. Calculate sell multiplier based on gap magnitude
-        3. Validate multiplier doesn't breach risk limits
-        4. Find appropriate PE strike with adequate premium
-        5. Execute trade and update reference value
-        
-        Example:
-        - Reference: 24,500, Gap: 25, Current: 24,560
-        - Difference: 60, Multiplier: 60/25 = 2
-        - Sell 2x PE quantity, Update reference to 24,550
+            current_price (float): The current price of the NIFTY index.
         """
-        # No action needed if price hasn't moved up sufficiently
         if current_price <= self.nifty_pe_last_value:
             self._log_stable_market(current_price)
             return
 
-        # Calculate price difference and check if it exceeds gap threshold
         price_diff = round(current_price - self.nifty_pe_last_value, 0)
         if price_diff > self.strat_var_pe_gap:
-            # Calculate multiplier for position sizing
             sell_multiplier = int(price_diff / self.strat_var_pe_gap)
             
-            # Risk check: Ensure multiplier doesn't exceed threshold
             if self._check_sell_multiplier_breach(sell_multiplier):
                 logger.warning(f"Sell multiplier {sell_multiplier} breached the threshold {self.strat_var_sell_multiplier_threshold}")
                 return
 
-            # Update reference value based on executed gaps
             self.nifty_pe_last_value += self.strat_var_pe_gap * sell_multiplier
-            
-            # Calculate total quantity to trade
             total_quantity = sell_multiplier * self.strat_var_pe_quantity
 
-            # Find suitable PE option with adequate premium
             temp_gap = self.strat_var_pe_symbol_gap
             while True:
-                # Find PE instrument at specified gap from current price
                 instrument = self._find_nifty_symbol_from_gap("PE", current_price, gap=temp_gap)
                 if not instrument:
                     logger.warning("No suitable instrument found for PE with gap %s", temp_gap)
                     return 
                 
-                # Get current quote for the selected instrument
                 symbol_code = self.strat_var_exchange + ":" + instrument['tradingsymbol']
                 quote = self.broker.get_quote(symbol_code)[symbol_code]
                 
-                # Check if premium meets minimum threshold
                 if quote['last_price'] < self.strat_var_min_price_to_sell:
                     logger.info(f"Last price {quote['last_price']} is less than min price to sell {self.strat_var_min_price_to_sell}")
-                    # Try closer strike if premium is too low
                     temp_gap -= self.strat_var_nifty_lot_size
                     continue
                     
-                # Execute the trade
                 logger.info(f"Execute PE sell @ {instrument['tradingsymbol']} × {total_quantity}, Market Price")
                 self._place_order(instrument['tradingsymbol'], total_quantity)
                 
-                # Set reset flag to enable reset logic
                 self.pe_reset_gap_flag = 1
                 break
 
-    def _handle_ce_trade(self, current_price):
-        """
-        Handle CE (Call) option trading logic
-        
+    def _handle_ce_trade(self, current_price: float):
+        """Evaluates and executes CE (Call) option trades.
+
+        This method is triggered when the NIFTY index moves down. It sells CE
+        options to profit from the downward movement.
+
+        The process involves:
+        1.  Checking if the downward price movement exceeds `ce_gap`.
+        2.  Calculating a `sell_multiplier` based on the gap magnitude.
+        3.  Validating the multiplier against risk limits.
+        4.  Finding a suitable CE strike with an adequate premium.
+        5.  Executing the trade and updating the `nifty_ce_last_value`.
+
         Args:
-            current_price (float): Current NIFTY index price
-            
-        CE Trading Logic:
-        - Triggered when current_price < nifty_ce_last_value - ce_gap
-        - Sells CE options (benefits from downward price movement)
-        - Updates reference value after execution
-        
-        Process:
-        1. Check if downward movement exceeds gap threshold
-        2. Calculate sell multiplier based on gap magnitude
-        3. Validate multiplier doesn't breach risk limits
-        4. Find appropriate CE strike with adequate premium
-        5. Execute trade and update reference value
-        
-        Example:
-        - Reference: 24,500, Gap: 25, Current: 24,440
-        - Difference: 60, Multiplier: 60/25 = 2
-        - Sell 2x CE quantity, Update reference to 24,450
+            current_price (float): The current price of the NIFTY index.
         """
         # No action needed if price hasn't moved down sufficiently
         if current_price >= self.nifty_ce_last_value:
@@ -346,81 +277,51 @@ class SurvivorStrategy:
                 self.ce_reset_gap_flag = 1
                 break
 
-    def _reset_reference_values(self, current_price):
-        """
-        Reset reference values when market moves favorably
-        
+    def _reset_reference_values(self, current_price: float):
+        """Resets reference prices when the market moves favorably.
+
+        This mechanism prevents reference points from drifting too far from the
+        current market price, ensuring the strategy remains responsive.
+
+        -   The PE reference is reset if the price drops significantly after a
+            PE trade has occurred.
+        -   The CE reference is reset if the price rises significantly after a
+            CE trade has occurred.
+
         Args:
-            current_price (float): Current NIFTY index price
-            
-        Reset Logic:
-        - PE Reset: When price drops significantly below PE reference AND reset flag is set
-        - CE Reset: When price rises significantly above CE reference AND reset flag is set
-        
-        Purpose:
-        1. Prevents reference values from drifting too far from market
-        2. Maintains strategy responsiveness to changing market conditions
-        3. Reduces risk of excessive position accumulation
-        
-        Reset Conditions:
-        - PE: (pe_last_value - current_price) > pe_reset_gap AND pe_reset_gap_flag = 1
-        - CE: (current_price - ce_last_value) > ce_reset_gap AND ce_reset_gap_flag = 1
-        
-        Example PE Reset:
-        - PE Reference: 24,550, Current: 24,480, Reset Gap: 50
-        - Difference: 70 > 50, so reset PE reference to 24,530 (24,480 + 50)
+            current_price (float): The current price of the NIFTY index.
         """
-        # PE Reset Logic: Reset when price drops significantly below PE reference
         if (self.nifty_pe_last_value - current_price) > self.strat_var_pe_reset_gap and self.pe_reset_gap_flag:
             logger.info(f"Resetting PE value from {self.nifty_pe_last_value} to {current_price + self.strat_var_pe_reset_gap}")
-            # Reset PE reference to current price plus reset gap
             self.nifty_pe_last_value = current_price + self.strat_var_pe_reset_gap
 
-        # CE Reset Logic: Reset when price rises significantly above CE reference  
         if (current_price - self.nifty_ce_last_value) > self.strat_var_ce_reset_gap and self.ce_reset_gap_flag:
             logger.info(f"Resetting CE value from {self.nifty_ce_last_value} to {current_price - self.strat_var_ce_reset_gap}")
-            # Reset CE reference to current price minus reset gap
             self.nifty_ce_last_value = current_price - self.strat_var_ce_reset_gap
 
-    def _find_nifty_symbol_from_gap(self, option_type, ltp, gap):
-        """
-        Find the most suitable option instrument based on strike distance from current price
-        
+    def _find_nifty_symbol_from_gap(self, option_type: str, ltp: float, gap: int) -> dict:
+        """Finds the best option instrument based on a strike distance from the LTP.
+
+        This method selects an option by:
+        1.  Calculating a target strike price (LTP +/- gap).
+        2.  Filtering available instruments for the correct type (PE/CE) and series.
+        3.  Finding the instrument with the strike closest to the target.
+
         Args:
-            option_type (str): 'PE' or 'CE' - type of option to find
-            ltp (float): Last traded price of the underlying (current NIFTY price)
-            gap (int): Distance from current price to target strike
-            
+            option_type (str): The type of option to find ('PE' or 'CE').
+            ltp (float): The last traded price of the underlying index.
+            gap (int): The desired distance from the LTP to the target strike.
+
         Returns:
-            dict: Instrument details including tradingsymbol, strike, etc., or None if not found
-            
-        Strike Selection Logic:
-        1. For PE: target_strike = ltp - gap (out-of-the-money puts)
-        2. For CE: target_strike = ltp + gap (out-of-the-money calls)
-        3. Find closest available strike within half strike difference tolerance
-        4. Return the best match
-        
-        Example:
-        - LTP: 24,500, Gap: 200, Option Type: PE
-        - Target Strike: 24,300
-        - Find closest available strike to 24,300 (e.g., 24,300 or 24,250)
-        
-        Filtering Criteria:
-        - Must match symbol_initials (correct expiry series)
-        - Must be the correct option type (PE/CE)
-        - Must be in NFO-OPT segment
-        - Must be within acceptable strike range
+            dict: The instrument details of the best match, or None if not found.
         """
-        # Convert gap to symbol_gap based on option type
         if option_type == "PE":
-            symbol_gap = -gap  # Negative for PE (below current price)
+            symbol_gap = -gap
         else:
-            symbol_gap = gap   # Positive for CE (above current price)
+            symbol_gap = gap
             
-        # Calculate target strike price
         target_strike = ltp + symbol_gap
         
-        # Filter instruments for matching criteria
         df = self.instruments[
             (self.instruments['tradingsymbol'].str.startswith(self.strat_var_symbol_initials)) &
             (self.instruments['instrument_type'] == option_type) &
@@ -430,10 +331,8 @@ class SurvivorStrategy:
         if df.empty:
             return None
             
-        # Find closest strike within acceptable tolerance
         df['target_strike_diff'] = (df['strike'] - target_strike).abs()
         
-        # Filter to strikes within half strike difference (tolerance for rounding)
         tolerance = self._get_strike_difference(self.strat_var_symbol_initials) / 2
         df = df[df['target_strike_diff'] <= tolerance]
         
@@ -442,36 +341,31 @@ class SurvivorStrategy:
                         f"within {tolerance} of {target_strike}")
             return None
             
-        # Return the closest match
         best = df.sort_values('target_strike_diff').iloc[0]
         return best.to_dict()
 
-    def _find_price_eligible_symbol(self, option_type):
-        """
-        Find an option symbol that meets premium requirements
-        
+    def _find_price_eligible_symbol(self, option_type: str) -> dict:
+        """Finds an option symbol that meets the minimum premium requirement.
+
+        This method iteratively searches for an option that has a premium
+        above the configured `min_price_to_sell`.
+
+        Note:
+            This method appears to have issues and may not be actively used.
+            The core trading logic in `_handle_pe_trade` and `_handle_ce_trade`
+            contains a more direct implementation of this functionality.
+
         Args:
-            option_type (str): 'PE' or 'CE'
-            
+            option_type (str): The type of option to find ('PE' or 'CE').
+
         Returns:
-            dict: Instrument details for eligible option, or None if none found
-            
-        This method iteratively searches for options that:
-        1. Meet the gap criteria
-        2. Have premium above minimum threshold
-        3. Are liquid and tradeable
-        
-        Note: This method appears to have some issues and may not be actively used
-        in the current implementation. The main trading methods use inline logic instead.
+            dict: The instrument details if a suitable option is found, otherwise None.
         """
-        # Get initial gap based on option type
         temp_gap = self.strat_var_pe_symbol_gap if option_type == "PE" else self.strat_var_ce_symbol_gap
         
         while True:
-            # Get current market price
             ltp = self._nifty_quote()['last_price']
             
-            # Find instrument at current gap
             instrument = self._find_nifty_symbol_from_gap(
                 self.instruments, self.strat_var_symbol_initials, temp_gap, option_type, ltp, self.strat_var_nifty_lot_size
             )
@@ -479,43 +373,28 @@ class SurvivorStrategy:
             if instrument is None:
                 return None
                 
-            # Check if premium meets minimum threshold
             symbol_code = f"{self.strat_var_exchange}:{instrument['tradingsymbol']}"
             price = float(self.kite.quote(symbol_code)[symbol_code]['last_price'])
             
             if price < self.strat_var_min_price_to_sell:
-                # Try closer strike if premium too low
                 temp_gap -= self.strat_var_nifty_lot_size
             else:
                 return instrument
 
-    def _place_order(self, symbol, quantity):
-        """
-        Execute order placement through the broker
-        
+    def _place_order(self, symbol: str, quantity: int):
+        """Places a market order through the broker.
+
+        This method executes the order and adds it to the `OrderTracker` for
+        management.
+
         Args:
-            symbol (str): Trading symbol for the option
-            quantity (int): Number of lots/shares to trade
-            
-        Process:
-        1. Place market order through broker interface
-        2. Log order details
-        3. Track order in order management system
-        4. Handle order failures gracefully
-        
-        Order Parameters:
-        - Transaction Type: From configuration (typically SELL)
-        - Order Type: From configuration (typically MARKET)
-        - Exchange: From configuration (typically NFO)
-        - Product: From configuration (NRML/MIS)
-        - Variety: Always REGULAR
-        - Tag: "Survivor" for identification
+            symbol (str): The trading symbol of the option.
+            quantity (int): The number of shares/lots to trade.
         """
-        # Place order through broker interface
         order_id = self.broker.place_order(
             symbol, 
             quantity, 
-            price=None,  # Market order
+            price=None,
             transaction_type=self.strat_var_trans_type, 
             order_type=self.strat_var_order_type, 
             variety="REGULAR", 
@@ -524,32 +403,30 @@ class SurvivorStrategy:
             tag="Survivor"
         )
         
-        # Handle order placement failure
         if order_id == -1:
             logger.error(f"Order placement failed for {symbol} × {quantity}, Market Price")
             return
             
         logger.info(f"Placing order for {symbol} × {quantity}, Market Price")
         
-        # Track the order using OrderTracker
         from datetime import datetime
         order_details = {
             "order_id": order_id,
             "symbol": symbol,
             "transaction_type": self.strat_var_trans_type,
             "quantity": quantity,
-            "price": None,  # Market order
+            "price": None,
             "timestamp": datetime.now().isoformat(),
         }
         
-        # Add to order tracking system
         self.order_manager.add_order(order_details)
         
 
-    def _log_stable_market(self, current_val):
-        """
-        Log current market state when no trading action is taken
+    def _log_stable_market(self, current_val: float):
+        """Logs the market state when no trading action is taken.
 
+        Args:
+            current_val (float): The current price of the NIFTY index.
         """
         logger.info(
             f"{self.strat_var_symbol_initials} Nifty under control. "
@@ -636,8 +513,15 @@ if __name__ == "__main__":
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)['default']
 
-    def create_argument_parser():
-        """Create and configure argument parser with detailed help"""
+    def create_argument_parser() -> argparse.ArgumentParser:
+        """Creates and configures the argument parser for the strategy.
+
+        This function sets up all the command-line arguments, including their
+        types, help messages, and default values.
+
+        Returns:
+            argparse.ArgumentParser: The configured argument parser.
+        """
         parser = argparse.ArgumentParser(
             description="Survivor",
             formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -803,13 +687,11 @@ PARAMETER GROUPS:
         
         return parser
 
-    def show_config(config):
-        """
-        Display current configuration in organized format
-        
+    def show_config(config: dict):
+        """Displays the current strategy configuration in a formatted table.
+
         Args:
-            config (dict): Configuration dictionary to display
-            
+            config (dict): The configuration dictionary to display.
         """
         print("\n" + "="*80)
         print("SURVIVOR STRATEGY CONFIGURATION")
@@ -923,10 +805,20 @@ PARAMETER GROUPS:
     # ==========================================================================
     
     # Validate that user has updated default configuration values
-    def validate_configuration(config):
-        """
-        Validate that user has updated at least some default configuration values
-        Returns True if config is valid, False otherwise
+    def validate_configuration(config: dict) -> bool:
+        """Validates the strategy configuration.
+
+        This function checks if the user has updated the default parameters.
+        - If all parameters are at their defaults, it fails validation.
+        - If some are at defaults, it issues a warning and asks for user
+          confirmation to proceed.
+
+        Args:
+            config (dict): The configuration dictionary to validate.
+
+        Returns:
+            bool: True if the configuration is valid or confirmed by the user,
+                  False otherwise.
         """
         # Define default values that indicate user hasn't updated config
         default_values = {
@@ -1081,22 +973,37 @@ PARAMETER GROUPS:
     
     # Define websocket event handlers for real-time data processing
     
-    def on_ticks(ws, ticks):
+    def on_ticks(ws, ticks: list):
+        """Callback function to handle incoming ticks from the WebSocket.
+
+        Args:
+            ws: The WebSocket instance.
+            ticks (list): A list of tick data dictionaries.
+        """
         logger.debug("Received ticks: {}".format(ticks))
-        # Send tick data to strategy processing queue
         dispatcher.dispatch(ticks)
 
-    def on_connect(ws, response):
+    def on_connect(ws, response: dict):
+        """Callback function for when the WebSocket connection is established.
+
+        Args:
+            ws: The WebSocket instance.
+            response (dict): The connection response from the server.
+        """
         logger.info("Websocket connected successfully: {}".format(response))
         
-        # Subscribe to the underlying index instrument
         ws.subscribe([instrument_token])
         logger.info(f"✓ Subscribed to instrument token: {instrument_token}")
         
-        # Set full mode to receive complete market data (LTP, volume, OI, etc.)
         ws.set_mode(ws.MODE_FULL, [instrument_token])
 
-    def on_order_update(ws, data):
+    def on_order_update(ws, data: dict):
+        """Callback function for handling order update messages.
+
+        Args:
+            ws: The WebSocket instance.
+            data (dict): The order update data.
+        """
         logger.info("Order update received: {}".format(data))
         
 
