@@ -14,6 +14,7 @@ The framework is designed with a modular architecture to separate concerns and a
     -   `base.py`: An abstract base class that defines the common interface for all brokers.
     -   `fyers.py`: Implementation for the Fyers API.
     -   `zerodha.py`: Implementation for the Zerodha Kite Connect API.
+    -   `flattrade.py`: Implementation for the Flattrade API.
 -   `strategy/`: Houses the trading strategy logic.
     -   `survivor.py`: Implements the Survivor options trading strategy.
     -   `configs/survivor.yml`: The default configuration file for the Survivor strategy.
@@ -38,7 +39,11 @@ Then, sync the project dependencies:
 ```bash
 uv sync
 ```
-Alternatively, you can generate a `requirements.txt` from `pyproject.toml` and use `pip`.
+This will install most dependencies. However, the Flattrade API client requires a manual installation step. The necessary wheel file is included in this repository and will be installed with the following command:
+```bash
+uv pip install NorenRestApiPy*.whl
+```
+You may need to run this command from the root of the repository. Alternatively, you can generate a `requirements.txt` from `pyproject.toml` and use `pip`.
 
 ### 2. Configure Environment Variables
 
@@ -79,6 +84,15 @@ BROKER_NAME=zerodha
 BROKER_API_KEY=<YOUR_API_KEY>
 BROKER_API_SECRET=<YOUR_API_SECRET>
 BROKER_TOTP_ENABLE=false
+```
+
+**For Flattrade (Manual Login):**
+Flattrade requires a manual login to generate a session token. The application will prompt you to enter the token.
+```
+BROKER_NAME=flattrade
+BROKER_API_KEY=<YOUR_API_KEY>
+BROKER_API_SECRET=<YOUR_API_SECRET>
+BROKER_ID=<YOUR_FLATTRADE_USER_ID>
 ```
 
 ## Running the Survivor Strategy
