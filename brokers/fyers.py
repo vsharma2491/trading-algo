@@ -30,52 +30,86 @@ load_dotenv()
 # Rate limiting configuration for Fyers API
 # Per Second: 10, Per Minute: 200, Per Day: 100000
 def fyers_rate_limit(func):
-    """
-    Comprehensive rate limiting decorator for Fyers API calls.
-    Enforces: 10 calls/second, 200 calls/minute, 100000 calls/day
+    """A decorator to enforce Fyers API rate limits.
+
+    This decorator applies multiple rate-limiting rules to a function:
+    - 10 calls per second
+    - 200 calls per minute
+    - 100,000 calls per day
+
+    If a limit is exceeded, the decorator will pause the execution and retry.
+
+    Args:
+        func (callable): The function to be rate-limited.
+
+    Returns:
+        callable: The wrapped function with rate limiting applied.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        # Apply rate limiting at all levels
-        # This will automatically sleep if limits are exceeded
         logger.debug(f"Rate limiting applied to {func.__name__}")
         return func(*args, **kwargs)
     
     # Apply the rate limiting decorators
-    wrapper = sleep_and_retry(limits(calls=10, period=1))(wrapper)  # 10 per second
-    wrapper = sleep_and_retry(limits(calls=200, period=60))(wrapper)  # 200 per minute  
-    wrapper = sleep_and_retry(limits(calls=100000, period=86400))(wrapper)  # 100000 per day
+    wrapper = sleep_and_retry(limits(calls=10, period=1))(wrapper)
+    wrapper = sleep_and_retry(limits(calls=200, period=60))(wrapper)
+    wrapper = sleep_and_retry(limits(calls=100000, period=86400))(wrapper)
     
     return wrapper
 
-def getEncodedString(string):
+def getEncodedString(string: str) -> str:
+    """Encodes a string to a Base64 ASCII string.
+
+    Args:
+        string (str): The string to encode.
+
+    Returns:
+        str: The Base64 encoded string.
+    """
     return base64.b64encode(str(string).encode("ascii")).decode("ascii")
 
 
 class FyersBroker(BrokerBase):
-    """
-    A unified broker class for Fyers that provides:
+    """A broker class for Fyers with REST and WebSocket capabilities.
 
-    1. REST-based methods to retrieve historical data and quotes.
-    2. A WebSocket connection for live data streaming, using the provided callbacks.
+    This class handles both RESTful API calls for historical data, quotes, and
+    margin details, as well as WebSocket connections for live data streaming.
 
-    Parameters for the WebSocket connection (symbols, data_type, log_path, litemode,
-    write_to_file, reconnect, data_handler) are accepted in the constructor.
-
-    This class keeps the two approaches distinct while consolidating them into a single class.
+    Attributes:
+        access_token (str): The authenticated access token.
+        auth_response_data (dict): The full response from the authentication endpoint.
+        fyers_model (fyersModel.FyersModel): The Fyers API model instance.
+        symbols (list): A list of symbols for WebSocket subscription.
+        data_type (str): The type of data to subscribe to via WebSocket.
+        ws (data_ws.FyersDataSocket): The WebSocket instance.
     """
 
     def __init__(
         self,
-        symbols=None,
-        data_type="SymbolUpdate",
-        log_path="",
-        litemode=False,
-        write_to_file=False,
-        reconnect=True,
-        data_handler=None,
+        symbols: Optional[List[str]] = None,
+        data_type: str = "SymbolUpdate",
+        log_path: str = "",
+        litemode: bool = False,
+        write_to_file: bool = False,
+        reconnect: bool = True,
+        data_handler: Optional[Any] = None,
     ):
-        # Authenticate and initialize REST model
+        """Initializes the FyersBroker.
+
+        Args:
+            symbols (Optional[List[str]]): A list of symbols for WebSocket
+                subscription. Defaults to a sample list.
+            data_type (str): The type of data for WebSocket subscription
+                (e.g., "SymbolUpdate"). Defaults to "SymbolUpdate".
+            log_path (str): The file path for logging. Defaults to "".
+            litemode (bool): Whether to use litemode for WebSocket. Defaults to False.
+            write_to_file (bool): Whether to write WebSocket data to a file.
+                Defaults to False.
+            reconnect (bool): Whether to automatically reconnect the WebSocket.
+                Defaults to True.
+            data_handler (Optional[Any]): A handler to process incoming
+                WebSocket messages. Defaults to None.
+        """
         logger.info("Initializing FyersBroker...")
         self.access_token, self.auth_response_data = self.authenticate()
         self.fyers_model = fyersModel.FyersModel(
@@ -113,10 +147,17 @@ class FyersBroker(BrokerBase):
         # === End Benchmark Tracking Changes ===
     
     def authenticate(self) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        """
-        Authenticate with FYERS API using TOTP and return access token with user details.
+        """Authenticates with the Fyers API using a TOTP-based flow.
+
+        This method performs a multi-step authentication process to obtain an
+        access token. It requires environment variables for credentials.
+
         Returns:
-            Tuple of (access_token, response_data).
+            A tuple containing:
+            - Optional[str]: The access token if authentication is successful,
+              otherwise None.
+            - Optional[Dict[str, Any]]: A dictionary with authentication
+              response data, including status and messages.
         """
         response_data = {
             'status': 'error',
@@ -295,24 +336,32 @@ class FyersBroker(BrokerBase):
         with open("FyersModel.json", "w") as f:
             json.dump(self.context, f)
 
-    def get_access_token(self):
+    def get_access_token(self) -> Optional[str]:
+        """Returns the authenticated access token.
+
+        Returns:
+            Optional[str]: The access token, or None if not authenticated.
+        """
         return self.access_token
 
     # REST-based data retrieval methods
     @fyers_rate_limit
-    def get_history(self, symbol: str, resolution: str, start_date: str, end_date: str, oi_flag: bool = False):
-        """
-        Retrieve historical data via REST, handling API limitations by breaking requests into
-        smaller chunks based on resolution.
+    def get_history(self, symbol: str, resolution: str, start_date: str, end_date: str, oi_flag: bool = False) -> Dict[str, Any]:
+        """Retrieves historical data by breaking requests into smaller chunks.
+
+        This method handles Fyers API limitations by automatically splitting
+        the date range into smaller intervals based on the data resolution.
 
         Args:
-            symbol (str): Trading symbol (e.g., "SBIN" or "NSE:SBIN-EQ")
-            resolution (str): Timeframe resolution (e.g., "1", "5", "D", "1D", "5S")
-            start_date (str): Start date in format YYYY-MM-DD
-            end_date (str): End date in format YYYY-MM-DD
+            symbol (str): The trading symbol (e.g., "NSE:SBIN-EQ").
+            resolution (str): The timeframe resolution (e.g., "1", "5", "D").
+            start_date (str): The start date in "YYYY-MM-DD" format.
+            end_date (str): The end date in "YYYY-MM-DD" format.
+            oi_flag (bool): Whether to fetch open interest data. Defaults to False.
 
         Returns:
-            dict: Combined historical data response with all candles
+            Dict[str, Any]: A dictionary containing the combined historical
+                            data or an error message.
         """
         # Format symbol if needed
         formatted_symbol = (
@@ -386,9 +435,16 @@ class FyersBroker(BrokerBase):
         return {"s": "ok", "candles": all_candles}
     
     @fyers_rate_limit
-    def get_option_chain(self, data: dict, strikecount: int = 5):
-        """
-        Retrieve option chain via REST.
+    def get_option_chain(self, data: dict, strikecount: int = 5) -> Dict[str, Any]:
+        """Retrieves the option chain for a given underlying symbol.
+
+        Args:
+            data (dict): A dictionary containing the symbol for the option chain.
+            strikecount (int): The number of strikes to retrieve above and
+                below the current price. Defaults to 5.
+
+        Returns:
+            Dict[str, Any]: The option chain data from the Fyers API.
         """
         data["strikecount"] = strikecount
         result = self.fyers_model.optionchain(data)
@@ -397,30 +453,31 @@ class FyersBroker(BrokerBase):
     
 
     @fyers_rate_limit
-    def get_quotes(self, data: dict):
-        """
-        Retrieve current quotes via REST.
+    def get_quotes(self, data: dict) -> Dict[str, Any]:
+        """Retrieves real-time quotes for one or more symbols.
 
         Args:
-            data (dict): Parameters for quote data.
+            data (dict): A dictionary containing the list of symbols.
 
         Returns:
-            dict: Quotes data response.
+            Dict[str, Any]: The quote data from the Fyers API.
         """
         result = self.fyers_model.quotes(data)
         self.update_context()
         return result
 
     @fyers_rate_limit
-    def get_margin(self, symbols: list, use_curl=True):
-        """
-        Get margin details for the provided symbols.
+    def get_margin(self, symbols: list, use_curl: bool = True) -> Dict[str, Any]:
+        """Calculates and retrieves margin details for a list of symbols.
 
         Args:
-            symbols (list): List of symbol strings.
+            symbols (list): A list of trading symbols.
+            use_curl (bool): If True, uses cURL for the request; otherwise,
+                uses the requests library. Defaults to True.
 
         Returns:
-            dict: Margin information.
+            Dict[str, Any]: A dictionary containing margin information for each
+                            symbol or an error message.
         """
         url = "https://api-t1.fyers.in/api/v3/multiorder/margin"
         headers = {
@@ -494,15 +551,15 @@ class FyersBroker(BrokerBase):
 
 
     @fyers_rate_limit
-    def get_span_margin(self, order_data, use_curl=False):
-        """
-        Calculate span and exposure margin required for the given stock symbols using Fyers API.
+    def get_span_margin(self, order_data: List[Dict[str, Any]], use_curl: bool = False) -> Dict[str, Any]:
+        """Calculates span and exposure margin for a list of orders.
 
         Args:
-            order_data (list): List of dicts, each with keys: symbol, qty, side, type, productType, limitPrice, stopLoss
-            use_curl (bool): If True, use curl subprocess; else use requests (default).
+            order_data (List[Dict[str, Any]]): A list of order details.
+            use_curl (bool): If True, uses cURL for the request. Defaults to False.
+
         Returns:
-            dict: API response with margin details or error.
+            Dict[str, Any]: The API response with margin details or an error.
         """
         url = "https://api.fyers.in/api/v2/span_margin"
         headers = {
@@ -529,15 +586,18 @@ class FyersBroker(BrokerBase):
             return {"error": str(e)}
 
     @fyers_rate_limit
-    def get_multiorder_margin(self, order_data, use_curl=False):
-        """
-        Calculate margin required for a list of order bodies using Fyers Multiorder Margin API.
+    def get_multiorder_margin(self, order_data: List[Dict[str, Any]], use_curl: bool = False) -> Dict[str, Any]:
+        """Calculates the margin required for a list of orders.
+
+        This method uses the Fyers Multiorder Margin API to calculate the
+        total margin for a batch of orders.
 
         Args:
-            order_data (list): List of dicts, each with keys: symbol, qty, side, type, productType, limitPrice, stopLoss, stopPrice, takeProfit
-            use_curl (bool): If True, use curl subprocess; else use requests (default).
+            order_data (List[Dict[str, Any]]): A list of order details.
+            use_curl (bool): If True, uses cURL for the request. Defaults to False.
+
         Returns:
-            dict: API response with margin details or error.
+            Dict[str, Any]: The API response with margin details or an error.
         """
         url = "https://api-t1.fyers.in/api/v3/multiorder/margin"
         headers = {
@@ -564,11 +624,14 @@ class FyersBroker(BrokerBase):
             return {"error": str(e)}
 
     # WebSocket-based live data methods
-    def connect_websocket(self):
-        """
-        Establish a WebSocket connection for live data streaming.
+    def connect_websocket(self) -> data_ws.FyersDataSocket:
+        """Establishes a WebSocket connection for live data streaming.
 
-        Uses the provided parameters (symbols, data_type, log_path, etc.) and callbacks.
+        This method initializes and connects the Fyers WebSocket client using
+        the parameters provided during the broker's initialization.
+
+        Returns:
+            data_ws.FyersDataSocket: The connected WebSocket instance.
         """
         self.ws = data_ws.FyersDataSocket(
             access_token=self.access_token,

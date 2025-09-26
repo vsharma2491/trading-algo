@@ -3,7 +3,20 @@ import logging
 import logging.handlers
 
 
-def setup_logging():
+def setup_logging() -> logging.Logger:
+    """Sets up a centralized logging system for the application.
+
+    This function configures a root logger named "system" with two handlers:
+    1.  A TimedRotatingFileHandler that creates a new log file daily in a
+        `logs` directory, keeping a backup of the last 7 days.
+    2.  A StreamHandler that outputs logs to the console.
+
+    The file logger captures messages at the DEBUG level and above, while the
+    console logger captures messages at the INFO level and above.
+
+    Returns:
+        logging.Logger: The configured logger instance.
+    """
     # Determine package root directory and log directory
     package_dir = os.path.dirname(os.path.abspath(__file__))
     log_dir = os.path.join(package_dir, "logs")
