@@ -4,6 +4,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 from logger import logger
+from typing import Optional
 
 class SurvivorStrategy:
     """Implements the Survivor options trading strategy.
@@ -494,7 +495,6 @@ if __name__ == "__main__":
     from dispatcher import DataDispatcher
     from orders import OrderTracker
     from strategy.survivor import SurvivorStrategy
-    from brokers.zerodha import ZerodhaBroker
     from logger import logger
     from queue import Queue
     import random
@@ -943,7 +943,7 @@ PARAMETER GROUPS:
     logger.info(f"  Gap Triggers - PE: {config['pe_gap']}, CE: {config['ce_gap']}")
     logger.info(f"  Strike Selection - PE: -{config['pe_symbol_gap']}, CE: +{config['ce_symbol_gap']}")
     logger.info(f"  Base Quantities - PE: {config['pe_quantity']}, CE: {config['ce_quantity']}")
-    logger.info(f"  Risk Limits - Min Premium: ₹{config['min_price_to_sell']}, Max Multiplier: {config['sell_multiplier_threshold']}x")
+    logger.info(f"  Risk Limits - Min Premium: Rs.{config['min_price_to_sell']}, Max Multiplier: {config['sell_multiplier_threshold']}x")
 
     # ==========================================================================
     # SECTION 4: TRADING INFRASTRUCTURE SETUP
