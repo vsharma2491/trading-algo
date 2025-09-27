@@ -32,20 +32,28 @@ class SurvivorStrategy:
         nifty_ce_last_value (float): The reference price for CE trades.
     """
     
-    def __init__(self, broker, config: dict, order_manager):
+    def __init__(self, broker, config: dict, order_manager, is_backtest=False):
         """Initializes the SurvivorStrategy.
 
         Args:
-            broker: An instance of a broker class (e.g., ZerodhaBroker).
+            broker: An instance of a broker class.
             config (dict): A dictionary containing strategy parameters.
             order_manager: An instance of the OrderTracker class.
+            is_backtest (bool): Flag to indicate if running in backtest mode.
         """
         for k, v in config.items():
             setattr(self, f'strat_var_{k}', v)
-        # External dependencies
+
         self.broker = broker
         self.symbol_initials = self.strat_var_symbol_initials
-        self.order_manager = order_manager  # Store OrderTracker
+        self.order_manager = order_manager
+        self.is_backtest = is_backtest
+
+        if self.is_backtest:
+            self.trade_log = []
+            self.historical_option_data = {}  # Cache for option data
+            self.backtest_broker = broker # Used to fetch historical data
+
         self.broker.download_instruments()
         self.instruments = self.broker.instruments_df[self.broker.instruments_df['tradingsymbol'].str.startswith(self.symbol_initials)]   # For Zerodha
         if self.instruments.shape[0] == 0:
@@ -124,21 +132,20 @@ class SurvivorStrategy:
         self.strike_difference = abs(top2.iloc[1]['strike'] - top2.iloc[0]['strike'])
         return self.strike_difference
 
-    def on_ticks_update(self, ticks: dict):
+    def on_ticks_update(self, ticks: dict, timestamp=None):
         """The main entry point for the strategy on each market data tick.
 
-        This method is called by the trading loop whenever new market data is
-        received. It extracts the current price and triggers the evaluation
-        of PE and CE trading opportunities, as well as the reset logic.
+        This method is called by the trading loop. It extracts the current
+        price and triggers the evaluation of PE and CE trading opportunities.
 
         Args:
-            ticks (dict): A dictionary containing market data, including the
-                'last_price' of the underlying index.
+            ticks (dict): A dictionary containing market data.
+            timestamp: The timestamp of the current tick, used for backtesting.
         """
         current_price = ticks['last_price']
         
-        self._handle_pe_trade(current_price)
-        self._handle_ce_trade(current_price)
+        self._handle_pe_trade(current_price, timestamp)
+        self._handle_ce_trade(current_price, timestamp)
         self._reset_reference_values(current_price)
 
     def _check_sell_multiplier_breach(self, sell_multiplier: int) -> bool:
@@ -158,22 +165,40 @@ class SurvivorStrategy:
             return True
         return False
 
-    def _handle_pe_trade(self, current_price: float):
-        """Evaluates and executes PE (Put) option trades.
-
-        This method is triggered when the NIFTY index moves up. It sells PE
-        options to profit from the upward movement.
-
-        The process involves:
-        1.  Checking if the upward price movement exceeds `pe_gap`.
-        2.  Calculating a `sell_multiplier` based on the gap magnitude.
-        3.  Validating the multiplier against risk limits.
-        4.  Finding a suitable PE strike with an adequate premium.
-        5.  Executing the trade and updating the `nifty_pe_last_value`.
-
-        Args:
-            current_price (float): The current price of the NIFTY index.
+    def _get_historical_option_price(self, symbol: str, target_timestamp: str) -> Optional[float]:
         """
+        Retrieves the historical price of an option for a specific timestamp.
+        Caches results to avoid redundant API calls.
+        """
+        from datetime import datetime, timedelta
+
+        if symbol in self.historical_option_data:
+            # Find the closest price in the cached data
+            # This is a simplified lookup; a more robust solution would use a proper time-series library
+            for bar in self.historical_option_data[symbol]:
+                bar_time = bar.get('time') or bar.get('ts') # Adapt to different key names
+                if bar_time and bar_time >= target_timestamp:
+                    return float(bar.get('c', bar.get('close', 0.0)))
+            return None # No matching time found
+
+        # If not cached, fetch from broker
+        logger.info(f"Fetching historical data for option: {symbol}")
+        start_date = (datetime.fromisoformat(target_timestamp.split()[0]) - timedelta(days=1)).strftime('%Y-%m-%d')
+        end_date = (datetime.fromisoformat(target_timestamp.split()[0]) + timedelta(days=1)).strftime('%Y-%m-%d')
+
+        data = self.backtest_broker.get_historical_data(
+            symbol, self.strat_var_exchange, start_date, end_date, interval='1'
+        )
+
+        if data:
+            self.historical_option_data[symbol] = data
+            return self._get_historical_option_price(symbol, target_timestamp) # Retry with cached data
+
+        logger.warning(f"Could not fetch historical data for {symbol}")
+        return None
+
+    def _handle_pe_trade(self, current_price: float, timestamp=None):
+        """Evaluates and executes PE (Put) option trades."""
         if current_price <= self.nifty_pe_last_value:
             self._log_stable_market(current_price)
             return
@@ -183,7 +208,6 @@ class SurvivorStrategy:
             sell_multiplier = int(price_diff / self.strat_var_pe_gap)
             
             if self._check_sell_multiplier_breach(sell_multiplier):
-                logger.warning(f"Sell multiplier {sell_multiplier} breached the threshold {self.strat_var_sell_multiplier_threshold}")
                 return
 
             self.nifty_pe_last_value += self.strat_var_pe_gap * sell_multiplier
@@ -193,87 +217,61 @@ class SurvivorStrategy:
             while True:
                 instrument = self._find_nifty_symbol_from_gap("PE", current_price, gap=temp_gap)
                 if not instrument:
-                    logger.warning("No suitable instrument found for PE with gap %s", temp_gap)
                     return 
                 
-                symbol_code = self.strat_var_exchange + ":" + instrument['tradingsymbol']
-                quote = self.broker.get_quote(symbol_code)[symbol_code]
-                
-                if quote['last_price'] < self.strat_var_min_price_to_sell:
-                    logger.info(f"Last price {quote['last_price']} is less than min price to sell {self.strat_var_min_price_to_sell}")
+                price = None
+                if self.is_backtest:
+                    price = self._get_historical_option_price(instrument['tradingsymbol'], timestamp)
+                else:
+                    symbol_code = self.strat_var_exchange + ":" + instrument['tradingsymbol']
+                    quote = self.broker.get_quote(symbol_code)[symbol_code]
+                    price = quote['last_price']
+
+                if price is None or price < self.strat_var_min_price_to_sell:
+                    logger.info(f"Price {price} is less than min price to sell {self.strat_var_min_price_to_sell}")
                     temp_gap -= self.strat_var_nifty_lot_size
                     continue
                     
-                logger.info(f"Execute PE sell @ {instrument['tradingsymbol']} × {total_quantity}, Market Price")
-                self._place_order(instrument['tradingsymbol'], total_quantity)
-                
+                self._place_order(instrument['tradingsymbol'], total_quantity, price)
                 self.pe_reset_gap_flag = 1
                 break
 
-    def _handle_ce_trade(self, current_price: float):
-        """Evaluates and executes CE (Call) option trades.
-
-        This method is triggered when the NIFTY index moves down. It sells CE
-        options to profit from the downward movement.
-
-        The process involves:
-        1.  Checking if the downward price movement exceeds `ce_gap`.
-        2.  Calculating a `sell_multiplier` based on the gap magnitude.
-        3.  Validating the multiplier against risk limits.
-        4.  Finding a suitable CE strike with an adequate premium.
-        5.  Executing the trade and updating the `nifty_ce_last_value`.
-
-        Args:
-            current_price (float): The current price of the NIFTY index.
-        """
-        # No action needed if price hasn't moved down sufficiently
+    def _handle_ce_trade(self, current_price: float, timestamp=None):
+        """Evaluates and executes CE (Call) option trades."""
         if current_price >= self.nifty_ce_last_value:
             self._log_stable_market(current_price)
             return
 
-        # Calculate price difference and check if it exceeds gap threshold
         price_diff = round(self.nifty_ce_last_value - current_price, 0)  
         if price_diff > self.strat_var_ce_gap:
-            # Calculate multiplier for position sizing
             sell_multiplier = int(price_diff / self.strat_var_ce_gap)
             
-            # Risk check: Ensure multiplier doesn't exceed threshold
             if self._check_sell_multiplier_breach(sell_multiplier):
-                logger.warning(f"Sell multiplier {sell_multiplier} breached the threshold {self.strat_var_sell_multiplier_threshold}")
                 return
 
-            # Update reference value based on executed gaps
             self.nifty_ce_last_value -= self.strat_var_ce_gap * sell_multiplier
-            
-            # Calculate total quantity to trade
             total_quantity = sell_multiplier * self.strat_var_ce_quantity
 
-            # Find suitable CE option with adequate premium
             temp_gap = self.strat_var_ce_symbol_gap 
             while True:
-                # Find CE instrument at specified gap from current price
                 instrument = self._find_nifty_symbol_from_gap("CE", current_price, gap=temp_gap)
                 if not instrument:
-                    logger.warning("No suitable instrument found for CE with gap %s", temp_gap)
                     return
                     
-                # Get current quote for the selected instrument
-                symbol_code = self.strat_var_exchange + ":" + instrument['tradingsymbol']
-                quote = self.broker.get_quote(symbol_code)[symbol_code]
-                print("=======", quote)
+                price = None
+                if self.is_backtest:
+                    price = self._get_historical_option_price(instrument['tradingsymbol'], timestamp)
+                else:
+                    symbol_code = self.strat_var_exchange + ":" + instrument['tradingsymbol']
+                    quote = self.broker.get_quote(symbol_code)[symbol_code]
+                    price = quote['last_price']
                 
-                # Check if premium meets minimum threshold
-                if quote['last_price'] < self.strat_var_min_price_to_sell:
-                    logger.info(f"Last price {quote['last_price']} is less than min price to sell {self.strat_var_min_price_to_sell}, trying next strike")
-                    # Try closer strike if premium is too low
+                if price is None or price < self.strat_var_min_price_to_sell:
+                    logger.info(f"Price {price} is less than min price to sell {self.strat_var_min_price_to_sell}, trying next strike")
                     temp_gap -= self.strat_var_nifty_lot_size
                     continue
                     
-                # Execute the trade
-                logger.info(f"Execute CE sell @ {instrument['tradingsymbol']} × {total_quantity}, Market Price")
-                self._place_order(instrument['tradingsymbol'], total_quantity)
-                
-                # Set reset flag to enable reset logic
+                self._place_order(instrument['tradingsymbol'], total_quantity, price)
                 self.ce_reset_gap_flag = 1
                 break
 
@@ -381,20 +379,23 @@ class SurvivorStrategy:
             else:
                 return instrument
 
-    def _place_order(self, symbol: str, quantity: int):
-        """Places a market order through the broker.
+    def _place_order(self, symbol: str, quantity: int, price: float):
+        """Places an order; simulates it if in backtest mode."""
+        if self.is_backtest:
+            self.trade_log.append({
+                "symbol": symbol,
+                "quantity": quantity,
+                "price": price,
+                "transaction_type": self.strat_var_trans_type
+            })
+            logger.info(f"[BACKTEST] Order: {self.strat_var_trans_type} {quantity} {symbol} @ {price}")
+            return
 
-        This method executes the order and adds it to the `OrderTracker` for
-        management.
-
-        Args:
-            symbol (str): The trading symbol of the option.
-            quantity (int): The number of shares/lots to trade.
-        """
+        # Live trading logic
         order_id = self.broker.place_order(
             symbol, 
             quantity, 
-            price=None,
+            price=0, # Market order
             transaction_type=self.strat_var_trans_type, 
             order_type=self.strat_var_order_type, 
             variety="REGULAR", 
@@ -404,10 +405,10 @@ class SurvivorStrategy:
         )
         
         if order_id == -1:
-            logger.error(f"Order placement failed for {symbol} × {quantity}, Market Price")
+            logger.error(f"Order placement failed for {symbol} × {quantity}")
             return
             
-        logger.info(f"Placing order for {symbol} × {quantity}, Market Price")
+        logger.info(f"Placed order for {symbol} × {quantity}")
         
         from datetime import datetime
         order_details = {
@@ -415,7 +416,7 @@ class SurvivorStrategy:
             "symbol": symbol,
             "transaction_type": self.strat_var_trans_type,
             "quantity": quantity,
-            "price": None,
+            "price": price,
             "timestamp": datetime.now().isoformat(),
         }
         
@@ -685,6 +686,19 @@ PARAMETER GROUPS:
                         help='Path to YAML configuration file containing default values. '
                              'Defaults to system/strategy/configs/survivor.yml')
         
+        # =======================================================================
+        # BACKTESTING PARAMETERS
+        # =======================================================================
+
+        parser.add_argument('--backtest', action='store_true',
+                        help='Run the strategy in backtesting mode. Requires --start-date and --end-date.')
+
+        parser.add_argument('--start-date', type=str,
+                        help='Start date for backtesting (YYYY-MM-DD).')
+
+        parser.add_argument('--end-date', type=str,
+                        help='End date for backtesting (YYYY-MM-DD).')
+
         return parser
 
     def show_config(config: dict):
@@ -942,18 +956,144 @@ PARAMETER GROUPS:
     
     
     # Create broker interface for market data and order execution
-    if os.getenv("BROKER_TOTP_ENABLE") == "true":
-        logger.info("Using TOTP login flow")
-        broker = ZerodhaBroker(without_totp=False)
+    broker_name = os.getenv("BROKER_NAME", "zerodha").lower()
+    broker = None
+    logger.info(f"Selected broker: {broker_name}")
+
+    # Dynamically import and initialize the selected broker
+    if broker_name == "flattrade":
+        from brokers.flattrade import FlattradeBroker
+        broker = FlattradeBroker()
+    elif broker_name == "fyers":
+        from brokers.fyers import FyersBroker
+        broker = FyersBroker()
+    elif broker_name == "zerodha":
+        if os.getenv("BROKER_TOTP_ENABLE") == "true":
+            logger.info("Using Zerodha TOTP login flow")
+            broker = ZerodhaBroker(without_totp=False)
+        else:
+            logger.info("Using Zerodha normal login flow")
+            broker = ZerodhaBroker(without_totp=True)
     else:
-        logger.info("Using normal login flow")
-        broker = ZerodhaBroker(without_totp=True)
+        logger.error(f"Broker '{broker_name}' is not supported.")
+        sys.exit(1)
+
+    # If in backtest mode, fetch data, run backtest, and exit.
+    if args.backtest:
+        if not args.start_date or not args.end_date:
+            logger.error("Backtesting requires --start-date and --end-date.")
+            sys.exit(1)
+
+        logger.info(f"--- Starting Backtest Mode ---")
+        logger.info(f"Fetching historical data from {args.start_date} to {args.end_date}...")
+
+        index_symbol_parts = config['index_symbol'].split(':')
+        exchange = index_symbol_parts[0].strip()
+        symbol = index_symbol_parts[1].strip()
+
+        historical_data = broker.get_historical_data(
+            symbol=symbol,
+            exchange=exchange,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            interval='1'  # 1-minute interval for backtesting
+        )
+
+        if not historical_data:
+            logger.error("Failed to fetch historical data for the specified range. Exiting.")
+            sys.exit(1)
+
+        logger.info(f"Successfully fetched {len(historical_data)} data points for backtesting.")
+
+        # Initialize the strategy for backtesting
+        order_tracker = OrderTracker()
+        strategy = SurvivorStrategy(broker, config, order_tracker, is_backtest=True)
+
+        logger.info("--- Starting Backtest Simulation ---")
+        for bar in historical_data:
+            price_keys = ['c', 'close', 'last_price', 'intc']
+            last_price = None
+            for key in price_keys:
+                if key in bar and bar[key] is not None:
+                    try:
+                        last_price = float(bar[key])
+                        break
+                    except (ValueError, TypeError):
+                        continue
+
+            if last_price is None:
+                continue
+
+            timestamp = bar.get('time', bar.get('timestamp'))
+            simulated_tick = {'last_price': last_price}
+            strategy.on_ticks_update(simulated_tick, timestamp)
+
+        logger.info("--- Backtest Simulation Complete ---")
+
+        def generate_performance_report(strategy, final_timestamp):
+            """
+            Calculates and displays a performance report for the backtest.
+            """
+            trade_log = strategy.trade_log
+            total_pnl = 0
+            winning_trades = 0
+            losing_trades = 0
+            total_trades = len(trade_log)
+
+            if total_trades == 0:
+                print("No trades were executed during the backtest.")
+                return
+
+            print("\n--- Calculating P&L for all trades ---")
+
+            for trade in trade_log:
+                symbol = trade['symbol']
+                entry_price = trade['price']
+                quantity = trade['quantity']
+
+                # Assume we close the position at the end of the backtest
+                exit_price = strategy._get_historical_option_price(symbol, final_timestamp)
+                if exit_price is None:
+                    # If no final price is found, assume it expired worthless
+                    exit_price = 0
+                    logger.warning(f"Could not find exit price for {symbol}. Assuming it expired worthless.")
+
+                # Since all trades are 'SELL', PNL = (entry_price - exit_price) * quantity
+                pnl = (entry_price - exit_price) * quantity
+
+                if pnl > 0:
+                    winning_trades += 1
+                else:
+                    losing_trades += 1
+
+                total_pnl += pnl
+
+            win_rate = (winning_trades / total_trades) * 100 if total_trades > 0 else 0
+
+            print("\n--- Backtest Performance Report ---")
+            print(f" Period: {args.start_date} to {args.end_date}")
+            print("-----------------------------------")
+            print(f" Total Trades: {total_trades}")
+            print(f" Winning Trades: {winning_trades}")
+            print(f" Losing Trades: {losing_trades}")
+            print(f" Win Rate: {win_rate:.2f}%")
+            print(f" Total P&L: {total_pnl:.2f}")
+            print("-----------------------------------")
+
+        # Get the final timestamp from the historical data for P&L calculation
+        final_timestamp = historical_data[-1].get('time', historical_data[-1].get('timestamp'))
+
+        # Generate and display the performance report
+        generate_performance_report(strategy, final_timestamp)
+
+        sys.exit(0)
+
+    # --- Live Trading Setup ---
     
     # Create order tracking system for position management
     order_tracker = OrderTracker() 
     
     # Get instrument token for the underlying index
-    # This token is used for websocket subscription to receive real-time price updates
     try:
         quote_data = broker.get_quote(config['index_symbol'])
         instrument_token = quote_data[config['index_symbol']]['instrument_token']
@@ -963,7 +1103,6 @@ PARAMETER GROUPS:
         sys.exit(1)
 
     # Initialize data dispatcher for handling real-time market data
-    # The dispatcher manages queues and routes market data to strategy
     dispatcher = DataDispatcher()
     dispatcher.register_main_queue(Queue())
 

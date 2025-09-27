@@ -104,29 +104,28 @@ BROKER_ID=<YOUR_FLATTRADE_USER_ID>
 
 The main execution script for the Survivor strategy is located in `strategy/survivor.py`.
 
-### Basic Usage
-To run the strategy with the default configuration from `strategy/configs/survivor.yml`, navigate to the `strategy` directory and run:
+### Live Trading
+To run the strategy in live mode, simply execute the script. You can override any configuration parameters from the command line.
+
+**Example:**
 ```bash
 cd strategy/
-python survivor.py
+python survivor.py --pe-gap 25 --ce-gap 25
 ```
 **Note:** The script includes a validation step that requires you to confirm if you are running with default parameters.
 
-### Customizing Parameters
-You can override any parameter from the command line.
+### Backtesting the Strategy
+The framework includes a backtesting mode to simulate the strategy's performance on historical data. To run a backtest, use the `--backtest` flag and provide a start and end date.
 
-**Example:** Run with a different option series and custom gaps.
+**Example:**
 ```bash
 cd strategy/
-python survivor.py \
-    --symbol-initials NIFTY25DEC45 \
-    --pe-gap 30 --ce-gap 30 \
-    --pe-quantity 50 --ce-quantity 50 \
-    --min-price-to-sell 20
+python survivor.py --backtest --start-date 2023-01-01 --end-date 2023-01-31
 ```
+At the end of the simulation, a performance report will be displayed, showing key metrics like total P&L, win rate, and the number of trades.
 
 ### Viewing Configuration
-To see the final configuration after applying command-line overrides, use the `--show-config` flag:
+To see the final configuration after applying command-line overrides (for both live and backtest modes), use the `--show-config` flag:
 ```bash
 cd strategy/
 python survivor.py --show-config
