@@ -929,11 +929,6 @@ PARAMETER GROUPS:
         print("="*80)
         return True
     
-    # Run configuration validation
-    if not validate_configuration(config):
-        logger.error("Configuration validation failed. Please update your configuration.")
-        sys.exit(1)
-
     # Log configuration source and overrides
     if overridden_params:
         logger.info(f"Configuration loaded from {config_file} with command line overrides:")
@@ -968,6 +963,7 @@ PARAMETER GROUPS:
         from brokers.fyers import FyersBroker
         broker = FyersBroker()
     elif broker_name == "zerodha":
+        from brokers.zerodha import ZerodhaBroker
         if os.getenv("BROKER_TOTP_ENABLE") == "true":
             logger.info("Using Zerodha TOTP login flow")
             broker = ZerodhaBroker(without_totp=False)
