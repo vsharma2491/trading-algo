@@ -951,7 +951,8 @@ PARAMETER GROUPS:
     
     
     # Create broker interface for market data and order execution
-    broker_name = os.getenv("BROKER_NAME", "flattrade").lower()
+    # Forcing Flattrade to resolve login issues.
+    broker_name = "flattrade"
     broker = None
     logger.info(f"Selected broker: {broker_name}")
 
