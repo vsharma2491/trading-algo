@@ -36,6 +36,7 @@ class FlattradeBroker(BrokerBase):
         Returns:
             Optional[str]: The session token if successful, otherwise None.
         """
+        # IMPORTANT: Reading credentials securely from environment variables
         api_key = os.getenv("BROKER_API_KEY")
         api_secret = os.getenv("BROKER_API_SECRET")
         broker_id = os.getenv("BROKER_ID")
@@ -67,15 +68,21 @@ class FlattradeBroker(BrokerBase):
 
                 if token_data.get('stat') == 'Ok' and token_data.get('token'):
                     self.session_token = token_data['token']
+                    # Use a function to shut down the server
+                    shutdown_server()
                     return "Authentication successful! You can close this window."
                 else:
+                    shutdown_server()
                     return f"Error: {token_data.get('emsg', 'Unknown error')}", 400
             except requests.exceptions.RequestException as e:
+                shutdown_server()
                 return f"Error: {e}", 500
-            finally:
-                # Shutdown the server once the request is handled
-                request.environ.get('werkzeug.server.shutdown')()
 
+        def shutdown_server():
+            func = request.environ.get('werkzeug.server.shutdown')
+            if func is None:
+                raise RuntimeError('Not running with the Werkzeug Server')
+            func()
 
         server = Thread(target=app.run, kwargs={'port': 8080})
         server.daemon = True

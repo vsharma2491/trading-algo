@@ -2,7 +2,7 @@ import logging
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import requests
 import hashlib, pyotp
 from dotenv import load_dotenv
