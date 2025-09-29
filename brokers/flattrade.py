@@ -23,7 +23,8 @@ class FlattradeBroker(BrokerBase):
         """Initializes the FlattradeBroker."""
         super().__init__()
         logger.info("Initializing FlattradeBroker...")
-        self.api = NorenApi()
+        self.api = NorenApi(host='https://piconnect.flattrade.in/PiConnectTP/',
+                            websocket='wss://piconnect.flattrade.in/PiConnectWSTp/')
         self.session_token = None
         self.authenticate()
 
@@ -36,7 +37,6 @@ class FlattradeBroker(BrokerBase):
         Returns:
             Optional[str]: The session token if successful, otherwise None.
         """
-        # IMPORTANT: Reading credentials securely from environment variables
         api_key = os.getenv("BROKER_API_KEY")
         api_secret = os.getenv("BROKER_API_SECRET")
         broker_id = os.getenv("BROKER_ID")
